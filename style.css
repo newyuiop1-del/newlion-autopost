@@ -1,0 +1,7 @@
+body { margin: 0; background: #0b0b0d; color: #ececec; font: 16px/1.65 -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 720px; margin: 0 auto; padding: 40px 16px 64px; }
+h1 { color: #f2c14e; font-size: 28px; margin: 8px 0 4px; }
+h2 { font-size: 18px; margin-top: 28px; }
+a { color: #f2c14e; }
+.muted, .nav { color: #9a9aa2; font-size: 14px; }
+.icon { border-radius: 20px; }
