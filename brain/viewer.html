@@ -28,6 +28,12 @@
   li { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 8px; cursor: pointer; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   li:hover { background: rgba(255,255,255,.08); }
   #machines li, #peers li { cursor: default; flex-wrap: wrap; white-space: normal; }
+  #connect { margin: 12px 0 4px; padding: 10px; border: 1px solid var(--line); border-radius: 12px; display: grid; gap: 6px; }
+  #connect input { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: rgba(0,0,0,.35); color: var(--text); font: inherit; width: 100%; }
+  #connect .me { font-size: 12px; color: #ffd9a0; word-break: break-all; }
+  #connectMsg { font-size: 12px; }
+  #connectMsg.err { color: #ff8f8f; } #connectMsg.ok { color: #8fffb0; }
+  #peers li button { flex: none; padding: 2px 8px; font-size: 11px; background: rgba(255,255,255,.1); color: var(--dim); }
   #status { color: var(--dim); font-size: 12px; margin-top: 8px; }
   .hint { color: var(--dim); font-size: 11px; margin-top: 6px; }
   #info { right: 16px; top: 16px; width: 320px; max-height: calc(100% - 32px); overflow: auto; }
@@ -54,8 +60,15 @@
     <button id="rescan">⟳ สแกน</button>
     <button id="spin" class="ghost">↻ หมุน</button>
   </div>
-  <button id="reload" class="ghost" style="width:100%">🔗 sync กับสมองเครื่องอื่น</button>
+  <div id="connect">
+    <div class="me" id="me">ที่อยู่เครื่องนี้: …</div>
+    <input id="peerIp" placeholder="IP คอมอีกเครื่อง เช่น 192.168.1.20" autocomplete="off">
+    <input id="peerToken" placeholder="รหัสของเครื่องนั้น" autocomplete="off">
+    <button id="connectBtn">🔗 เชื่อม</button>
+    <div id="connectMsg"></div>
+  </div>
   <ul id="peers"></ul>
+  <button id="reload" class="ghost" style="width:100%">⟳ sync ตอนนี้</button>
   <ul id="machines"></ul>
   <a id="export" target="_blank" class="hint" style="display:block;color:#b9c6ff">📄 สรุปความรู้ให้ AI อ่าน (knowledge.md)</a>
   <div id="status"></div>

@@ -4,9 +4,9 @@
 ใช้ Python มาตรฐานอย่างเดียว (ไม่ต้อง pip install อะไร)
 
     python brain.py serve                      # สแกนเครื่องนี้ + เปิดหน้าสมอง http://localhost:8765
-    python brain.py serve --lan --token XYZ    # เปิดให้คอมเครื่องอื่นในบ้านส่งข้อมูลเข้ามาได้
+    python brain.py serve --local-only           # ไม่ให้เครื่องอื่นเชื่อมเข้ามา
     python brain.py push --hub http://192.168.1.10:8765 --token XYZ   # (รันบนคอมเครื่องอื่น)
-    python brain.py serve --lan --token XYZ --peer http://192.168.1.20:8765   # เชื่อมสมอง 2 เครื่อง (sync สองทาง)
+    python brain.py serve --peer 192.168.1.20 --peer-token รหัส   # เชื่อมสมอง 2 เครื่อง (หรือกดเชื่อมในหน้าจอ)
     python brain.py clone http://192.168.1.10:8765 --token XYZ            # คัดลอกสมองทั้งก้อนมาเครื่องนี้
     python brain.py export -o brain_export                                # สรุปความรู้ให้ AI อ่าน
     python brain.py scan ~/Documents -o graph.json                     # สแกนอย่างเดียว
@@ -298,9 +298,11 @@ def load_graphs() -> list[dict]:
     out = []
     for p in sorted(DATA_DIR.glob("*.json")):
         try:
-            out.append(json.loads(p.read_text("utf-8")))
+            g = json.loads(p.read_text("utf-8"))
         except (OSError, ValueError):
-            pass
+            continue
+        if isinstance(g, dict) and "machine" in g and "nodes" in g:   # ข้าม peers.json ฯลฯ
+            out.append(g)
     return out
 
 
@@ -335,8 +337,10 @@ def make_handler(cfg):
             self.wfile.write(body)
 
         def _authed(self) -> bool:
+            if self.client_address[0] in ("127.0.0.1", "::1", "::ffff:127.0.0.1"):
+                return True
             if not cfg.token:
-                return self.client_address[0] in ("127.0.0.1", "::1")
+                return False
             got = self.headers.get("X-Brain-Token", "")
             if not got:
                 got = parse_qs(urlparse(self.path).query).get("token", [""])[0]
@@ -356,6 +360,9 @@ def make_handler(cfg):
                 g = merge(load_graphs())
                 g["peers"] = cfg.peer_status
                 return self._send(200, g)
+            if u.path == "/api/info":
+                return self._send(200, {"machine": cfg.machine, "addr": cfg.addr, "lan": cfg.lan,
+                                        "token": cfg.token if self.client_address[0] in ("127.0.0.1", "::1", "::ffff:127.0.0.1") else ""})
             if u.path == "/api/graphs":          # ข้อมูลดิบทุกเครื่อง สำหรับ sync สมองต่อสมอง
                 return self._send(200, load_graphs())
             if u.path == "/api/knowledge.md":    # สรุปให้ AI อ่าน
@@ -382,6 +389,30 @@ def make_handler(cfg):
                 if saved:
                     print(f"  รับข้อมูลจาก {body['machine']} ({len(body['nodes'])} โหนด)")
                 return self._send(200, {"ok": True, "saved": saved})
+            if u.path == "/api/peers":
+                url = norm_peer(str(body.get("url", "")))
+                if not url:
+                    return self._send(400, {"error": "ใส่ IP ของเครื่องอื่นก่อน เช่น 192.168.1.20"})
+                if body.get("remove"):
+                    cfg.peers.pop(url, None); cfg.peer_status.pop(url, None); save_peers(cfg.peers)
+                    return self._send(200, {"ok": True})
+                if url.split("://", 1)[1] in (cfg.addr, f"127.0.0.1:{cfg.port}", f"localhost:{cfg.port}"):
+                    return self._send(400, {"error": "นี่คือที่อยู่ของเครื่องนี้เอง — ใส่ IP ของคอมอีกเครื่อง"})
+                ptoken = str(body.get("token", "")).strip() or cfg.token
+                try:
+                    got, sent = sync_with(url, ptoken)
+                except Exception as e:  # noqa: BLE001
+                    return self._send(400, {"error": explain_error(e, url)})
+                cfg.peers[url] = ptoken
+                save_peers(cfg.peers)
+                cfg.peer_status[url] = {"ok": True, "at": int(time.time()), "got": got, "sent": sent}
+                # ให้เครื่องนั้นเชื่อมกลับมาหาเราด้วย (สองทาง) — ไม่สำเร็จก็ไม่เป็นไร
+                try:
+                    _http(url + "/api/peers", ptoken, {"url": f"http://{cfg.addr}", "token": cfg.token,
+                                                         "no_back": True}, timeout=15) if not body.get("no_back") else None
+                except Exception:  # noqa: BLE001
+                    pass
+                return self._send(200, {"ok": True, "got": got, "sent": sent})
             if u.path == "/api/sync":
                 return self._send(200, {"peers": run_sync(cfg)})
             if u.path == "/api/rescan":
@@ -408,15 +439,58 @@ def lan_ip() -> str:
         return "127.0.0.1"
 
 
+def norm_peer(url: str) -> str:
+    url = url.strip().rstrip("/")
+    if not url:
+        return ""
+    if "://" not in url:
+        url = "http://" + url
+    if not re.search(r":\d+$", url.split("://", 1)[1]):
+        url += ":8765"
+    return url
+
+
+def load_peers() -> dict:
+    try:
+        return json.loads((DATA_DIR / "peers.json").read_text("utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def save_peers(peers: dict) -> None:
+    DATA_DIR.mkdir(exist_ok=True)
+    (DATA_DIR / "peers.json").write_text(json.dumps(peers, ensure_ascii=False, indent=1), "utf-8")
+
+
+def explain_error(e: Exception, url: str) -> str:
+    """แปลง error ให้เป็นภาษาคนว่าทำไมเชื่อมไม่ได้"""
+    import urllib.error
+    if isinstance(e, urllib.error.HTTPError):
+        if e.code == 401:
+            return "รหัส (token) ไม่ตรงกับของเครื่องนั้น — ดูรหัสที่หน้าจอของเครื่องนั้น"
+        if e.code == 404:
+            return "เจอเครื่องแล้ว แต่เป็นโปรแกรม Brain เวอร์ชันเก่า — อัปเดต brain.py ที่เครื่องนั้น"
+        return f"เครื่องนั้นตอบกลับ error {e.code}"
+    msg = str(getattr(e, "reason", e))
+    if "refused" in msg.lower() or "10061" in msg:
+        return "ต่อไม่ติด — เครื่องนั้นยังไม่ได้เปิดโปรแกรม Brain หรือพอร์ตผิด"
+    if "timed out" in msg.lower() or "10060" in msg:
+        return ("หมดเวลารอ — มักเป็น Firewall ของเครื่องนั้นบล็อก (Windows: กด Allow ตอนเปิดครั้งแรก) "
+                "หรือไม่ได้อยู่ Wi-Fi/วงแลนเดียวกัน")
+    if "getaddrinfo" in msg.lower() or "name or service" in msg.lower():
+        return "หาเครื่องไม่เจอ — ตรวจ IP อีกครั้ง"
+    return msg[:200]
+
+
 def run_sync(cfg) -> dict:
-    for peer in cfg.peers:
+    for peer, ptoken in list(cfg.peers.items()):
         try:
-            got, sent = sync_with(peer, cfg.peer_token or cfg.token)
+            got, sent = sync_with(peer, ptoken or cfg.token)
             cfg.peer_status[peer] = {"ok": True, "at": int(time.time()), "got": got, "sent": sent}
             if got or sent:
                 print(f"  sync กับ {peer}: รับ {got} เครื่อง, ส่ง {sent} เครื่อง")
         except Exception as e:  # noqa: BLE001
-            cfg.peer_status[peer] = {"ok": False, "at": int(time.time()), "error": str(e)[:200]}
+            cfg.peer_status[peer] = {"ok": False, "at": int(time.time()), "error": explain_error(e, peer)}
             print(f"  sync กับ {peer} ไม่สำเร็จ: {e}", file=sys.stderr)
     return cfg.peer_status
 
@@ -424,15 +498,28 @@ def run_sync(cfg) -> dict:
 def cmd_serve(a):
     a.peer_status = {}
     a.roots = [Path(r) for r in a.paths] or default_roots()
-    if a.lan and not a.token:
-        sys.exit("เปิด --lan ต้องตั้ง --token ด้วย เช่น --token " + os.urandom(6).hex())
+    a.lan = not a.local_only
+    if not a.token:                       # สร้างรหัสให้อัตโนมัติ และจำไว้ใช้ครั้งต่อไป
+        tf = DATA_DIR / "token.txt"
+        DATA_DIR.mkdir(exist_ok=True)
+        a.token = tf.read_text().strip() if tf.exists() else ""
+        if not a.token:
+            a.token = os.urandom(4).hex()
+            tf.write_text(a.token)
+    a.peers = load_peers()
+    for u in a.peer_urls:
+        a.peers[norm_peer(u)] = a.peer_token or a.token
+    save_peers(a.peers)
+    a.addr = f"{lan_ip()}:{a.port}"
     if not a.no_scan:
         print(f"กำลังสแกน {a.machine}: {', '.join(map(str, a.roots))}")
         save_graph(scan(a.roots, a.machine, a.max_files))
     host = "0.0.0.0" if a.lan else "127.0.0.1"
     srv = ThreadingHTTPServer((host, a.port), make_handler(a))
-    q = f"?token={a.token}" if a.token else ""
-    print(f"\n🧠 สมองพร้อมแล้ว → http://localhost:{a.port}/{q}")
+    print(f"\n🧠 สมองพร้อมแล้ว → เปิด http://localhost:{a.port}")
+    if a.lan:
+        print(f"   ที่อยู่เครื่องนี้: {a.addr}    รหัส: {a.token}")
+        print("   (เอา 2 อย่างนี้ไปกรอกที่หน้าจอ Brain ของคอมอีกเครื่อง แล้วกด 'เชื่อม')")
     if a.lan:
         print(f"   คอมเครื่องอื่นส่งข้อมูลเข้ามาด้วย:\n"
               f"   python brain.py push --hub http://{lan_ip()}:{a.port} --token {a.token}")
@@ -445,11 +532,12 @@ def cmd_serve(a):
     if a.peers:
         print(f"   เชื่อมสมองกับ: {', '.join(a.peers)} (sync ทุก {a.sync_every} วินาที)")
 
-        def sync_loop():
-            while True:
+    def sync_loop():
+        while True:
+            if a.peers:
                 run_sync(a)
-                time.sleep(a.sync_every)
-        threading.Thread(target=sync_loop, daemon=True).start()
+            time.sleep(a.sync_every)
+    threading.Thread(target=sync_loop, daemon=True).start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
@@ -516,10 +604,11 @@ def main(argv=None):
     s = sub.add_parser("serve", help="สแกนเครื่องนี้ + เปิดหน้าสมอง")
     common(s)
     s.add_argument("--port", type=int, default=8765)
-    s.add_argument("--lan", action="store_true", help="ให้เครื่องอื่นในวงแลนเชื่อมเข้ามาได้")
+    s.add_argument("--lan", action="store_true", help=argparse.SUPPRESS)  # เปิดอยู่แล้วโดยค่าเริ่มต้น
+    s.add_argument("--local-only", action="store_true", help="ไม่ให้เครื่องอื่นเชื่อมเข้ามา")
     s.add_argument("--token", default=os.environ.get("BRAIN_TOKEN", ""))
     s.add_argument("--no-scan", action="store_true")
-    s.add_argument("--peer", dest="peers", action="append", default=[],
+    s.add_argument("--peer", dest="peer_urls", action="append", default=[],
                    help="สมองอีกเครื่องที่จะ sync สองทาง เช่น http://192.168.1.20:8765 (ใส่ได้หลายครั้ง)")
     s.add_argument("--peer-token", default="", help="token ของสมองอีกเครื่อง (ถ้าไม่เหมือนของเรา)")
     s.add_argument("--sync-every", type=int, default=60)

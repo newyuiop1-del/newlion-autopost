@@ -86,8 +86,12 @@ async function load() {
     const twins = g.links.filter((l) => l.type === 'twin').length;
     $('#status').innerHTML = `${g.machines.length} เครื่อง · ${files.toLocaleString()} ไฟล์ · ${refs} เส้นอ้างอิง · ${twins} ไฟล์ซ้ำข้ามเครื่อง`;
     const peers = Object.entries(g.peers || {});
-    $('#peers').innerHTML = peers.length ? peers.map(([u, p]) => `<li>${p.ok ? '🟢' : '🔴'} 🧠 ${esc(u.replace(/^https?:\/\//, ''))} <span>${p.ok ? 'sync แล้ว ' + new Date(p.at * 1000).toLocaleTimeString('th-TH') : esc(p.error)}</span></li>`).join('')
-      : '<li><span>ยังไม่ได้เชื่อมสมองเครื่องอื่น (ใช้ --peer)</span></li>';
+    $('#peers').innerHTML = peers.length ? peers.map(([u, p]) => `<li>${p.ok ? '🟢' : '🔴'} 🧠 ${esc(u.replace(/^https?:\/\//, ''))} <button data-url="${esc(u)}">ยกเลิก</button><span style="flex-basis:100%;margin:0">${p.ok ? 'เชื่อมอยู่ · sync ล่าสุด ' + new Date(p.at * 1000).toLocaleTimeString('th-TH') : esc(p.error)}</span></li>`).join('')
+      : '';
+    $('#peers').querySelectorAll('button').forEach((b) => b.addEventListener('click', async () => {
+      await api('/api/peers', { method: 'POST', body: JSON.stringify({ url: b.dataset.url, remove: true }) }).catch((e) => toast(e.message));
+      load();
+    }));
     $('#machines').innerHTML = g.machines.map((m) => `<li>💻 ${esc(m.name)} <span>${m.files} ไฟล์ · ${new Date(m.scanned_at * 1000).toLocaleString('th-TH')}</span></li>`).join('');
   } catch (e) {
     $('#status').textContent = 'โหลดไม่ได้: ' + e.message + (token ? '' : ' (ต้องเปิดด้วย ?token=...)');
@@ -183,6 +187,21 @@ $('#reload').addEventListener('click', async () => {
   $('#status').textContent = 'กำลัง sync กับสมองเครื่องอื่น…';
   try { await api('/api/sync', { method: 'POST' }); } catch (e) { toast(e.message); }
   load();
+});
+api('/api/info').then((i) => {
+  $('#me').innerHTML = i.lan ? `ที่อยู่เครื่องนี้: <b>${esc(i.addr)}</b> · รหัส: <b>${esc(i.token)}</b><br><span style="color:var(--dim)">กรอก 2 อย่างนี้ที่คอมอีกเครื่อง</span>`
+    : 'เปิดแบบ --local-only อยู่ เครื่องอื่นเชื่อมเข้ามาไม่ได้';
+}).catch(() => {});
+$('#connectBtn').addEventListener('click', async () => {
+  const msg = $('#connectMsg'), btn = $('#connectBtn');
+  msg.className = ''; msg.textContent = 'กำลังเชื่อม…'; btn.disabled = true;
+  try {
+    const r = await api('/api/peers', { method: 'POST', body: JSON.stringify({ url: $('#peerIp').value, token: $('#peerToken').value }) });
+    msg.className = 'ok'; msg.textContent = `✅ เชื่อมสำเร็จ! รับข้อมูล ${r.got} เครื่อง ส่งไป ${r.sent} เครื่อง`;
+    $('#peerIp').value = ''; $('#peerToken').value = '';
+    load();
+  } catch (e) { msg.className = 'err'; msg.textContent = '❌ ' + e.message; }
+  btn.disabled = false;
 });
 $('#export').href = '/api/knowledge.md' + (token ? '?token=' + encodeURIComponent(token) : '');
 
