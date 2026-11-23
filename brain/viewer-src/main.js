@@ -85,6 +85,9 @@ async function load() {
     const refs = g.links.filter((l) => l.type === 'ref').length;
     const twins = g.links.filter((l) => l.type === 'twin').length;
     $('#status').innerHTML = `${g.machines.length} เครื่อง · ${files.toLocaleString()} ไฟล์ · ${refs} เส้นอ้างอิง · ${twins} ไฟล์ซ้ำข้ามเครื่อง`;
+    const peers = Object.entries(g.peers || {});
+    $('#peers').innerHTML = peers.length ? peers.map(([u, p]) => `<li>${p.ok ? '🟢' : '🔴'} 🧠 ${esc(u.replace(/^https?:\/\//, ''))} <span>${p.ok ? 'sync แล้ว ' + new Date(p.at * 1000).toLocaleTimeString('th-TH') : esc(p.error)}</span></li>`).join('')
+      : '<li><span>ยังไม่ได้เชื่อมสมองเครื่องอื่น (ใช้ --peer)</span></li>';
     $('#machines').innerHTML = g.machines.map((m) => `<li>💻 ${esc(m.name)} <span>${m.files} ไฟล์ · ${new Date(m.scanned_at * 1000).toLocaleString('th-TH')}</span></li>`).join('');
   } catch (e) {
     $('#status').textContent = 'โหลดไม่ได้: ' + e.message + (token ? '' : ' (ต้องเปิดด้วย ?token=...)');
@@ -176,9 +179,14 @@ $('#rescan').addEventListener('click', async () => {
   try { await api('/api/rescan', { method: 'POST' }); } catch (e) { toast(e.message); }
   load();
 });
-$('#reload').addEventListener('click', load);
+$('#reload').addEventListener('click', async () => {
+  $('#status').textContent = 'กำลัง sync กับสมองเครื่องอื่น…';
+  try { await api('/api/sync', { method: 'POST' }); } catch (e) { toast(e.message); }
+  load();
+});
+$('#export').href = '/api/knowledge.md' + (token ? '?token=' + encodeURIComponent(token) : '');
 
 addEventListener('resize', () => Graph.width(innerWidth).height(innerHeight));
 load();
-setInterval(load, 5 * 60 * 1000);
+setInterval(load, 60 * 1000);
 window.Graph = Graph;

@@ -6,6 +6,9 @@
     python brain.py serve                      # สแกนเครื่องนี้ + เปิดหน้าสมอง http://localhost:8765
     python brain.py serve --lan --token XYZ    # เปิดให้คอมเครื่องอื่นในบ้านส่งข้อมูลเข้ามาได้
     python brain.py push --hub http://192.168.1.10:8765 --token XYZ   # (รันบนคอมเครื่องอื่น)
+    python brain.py serve --lan --token XYZ --peer http://192.168.1.20:8765   # เชื่อมสมอง 2 เครื่อง (sync สองทาง)
+    python brain.py clone http://192.168.1.10:8765 --token XYZ            # คัดลอกสมองทั้งก้อนมาเครื่องนี้
+    python brain.py export -o brain_export                                # สรุปความรู้ให้ AI อ่าน
     python brain.py scan ~/Documents -o graph.json                     # สแกนอย่างเดียว
 
 ส่งเฉพาะ "ข้อมูลเกี่ยวกับไฟล์" (ชื่อ ขนาด เวลา ความเชื่อมโยง) ไม่ส่งเนื้อหาไฟล์
@@ -29,7 +32,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 HERE = Path(__file__).resolve().parent
-DATA_DIR = HERE / "data"
+DATA_DIR = Path(os.environ.get("BRAIN_DATA", HERE / "data"))
 VERSION = 1
 
 # ---------------------------------------------------------------- categories
@@ -207,10 +210,86 @@ def safe_name(s: str) -> str:
     return re.sub(r"[^\w\-.฀-๿]", "_", s)[:64] or "pc"
 
 
-def save_graph(g: dict) -> None:
+def save_graph(g: dict, only_if_newer: bool = False) -> bool:
+    """บันทึกกราฟของเครื่องหนึ่ง; only_if_newer=True ใช้ตอน sync เพื่อไม่ให้ข้อมูลเก่าทับข้อมูลใหม่"""
     DATA_DIR.mkdir(exist_ok=True)
-    (DATA_DIR / f"{safe_name(g['machine'])}.json").write_text(
-        json.dumps(g, ensure_ascii=False), "utf-8")
+    path = DATA_DIR / f"{safe_name(g['machine'])}.json"
+    if only_if_newer and path.exists():
+        try:
+            old = json.loads(path.read_text("utf-8"))
+            if old.get("scanned_at", 0) >= g.get("scanned_at", 0):
+                return False
+        except (OSError, ValueError):
+            pass
+    path.write_text(json.dumps(g, ensure_ascii=False), "utf-8")
+    return True
+
+
+# ---------------------------------------------------------------- brain-to-brain sync
+def _http(url: str, token: str, body=None, timeout=60):
+    data = None if body is None else json.dumps(body, ensure_ascii=False).encode()
+    req = urllib.request.Request(url, data=data, headers={
+        "Content-Type": "application/json", "X-Brain-Token": token or ""})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read() or b"null")
+
+
+def sync_with(peer: str, token: str, send: bool = True) -> tuple[int, int]:
+    """ดึงความรู้ทั้งหมดจากสมองอีกเครื่อง + ส่งความรู้ของเราไปให้ (สองทาง)"""
+    peer = peer.rstrip("/")
+    got = sum(save_graph(g, only_if_newer=True) for g in _http(peer + "/api/graphs", token))
+    sent = 0
+    if send:
+        for g in load_graphs():
+            r = _http(peer + "/api/push?sync=1", token, g)
+            sent += bool(r and r.get("saved"))
+    return got, sent
+
+
+def knowledge_md(graphs: list[dict]) -> str:
+    """สรุปความรู้ของสมองเป็น Markdown ให้ AI บนคอมอีกเครื่องอ่าน/ศึกษาได้"""
+    m = merge(graphs)
+    byid = {n["id"]: n for n in m["nodes"]}
+    deg: dict[str, int] = {}
+    for l in m["links"]:
+        if l["type"] != "contains":
+            for k in (l["source"], l["target"]):
+                deg[k] = deg.get(k, 0) + 1
+    out = ["# BRAIN — ความรู้รวมของทุกเครื่อง", "",
+           f"สร้างเมื่อ {time.strftime('%Y-%m-%d %H:%M')} · {len(graphs)} เครื่อง", "",
+           "## เครื่องทั้งหมด"]
+    for g in graphs:
+        files = [n for n in g["nodes"] if n["kind"] == "file"]
+        cats: dict[str, int] = {}
+        for n in files:
+            cats[n["cat"]] = cats.get(n["cat"], 0) + 1
+        out.append(f"- **{g['machine']}** ({next((n.get('os', '') for n in g['nodes'] if n['kind'] == 'machine'), '')}) "
+                   f"— {len(files)} ไฟล์, สแกน {time.strftime('%Y-%m-%d %H:%M', time.localtime(g.get('scanned_at', 0)))}; "
+                   f"โฟลเดอร์หลัก: {', '.join(g.get('roots', []))}; "
+                   + ", ".join(f"{CATS.get(c, c)} {k}" for c, k in sorted(cats.items(), key=lambda x: -x[1])))
+    out += ["", "## ไฟล์ที่เป็นศูนย์กลาง (เชื่อมกับไฟล์อื่นมากที่สุด)"]
+    for nid, k in sorted(deg.items(), key=lambda x: -x[1])[:40]:
+        n = byid.get(nid)
+        if n and n["kind"] == "file":
+            out.append(f"- `{n['path']}` [{n['machine']}, {CATS.get(n['cat'], n['cat'])}] — {k} เส้น")
+    out += ["", "## ไฟล์เดียวกันที่อยู่หลายเครื่อง"]
+    out += [f"- {byid[l['source']]['name']}: {byid[l['source']]['machine']} ↔ {byid[l['target']]['machine']}"
+            for l in m["links"] if l["type"] == "twin"][:200] or ["- (ไม่มี)"]
+    out += ["", "## ความเชื่อมโยงระหว่างไฟล์ (ไฟล์ A อ้างถึงไฟล์ B)"]
+    refs = [l for l in m["links"] if l["type"] == "ref"]
+    out += [f"- {byid[l['source']]['machine']}:`{byid[l['source']]['path']}` → `{byid[l['target']]['path']}`"
+            for l in refs[:1500]]
+    if len(refs) > 1500:
+        out.append(f"- …และอีก {len(refs) - 1500} เส้น (ดูทั้งหมดใน brain_knowledge.json)")
+    out += ["", "## โครงสร้างโฟลเดอร์ (จำนวนไฟล์ในแต่ละโฟลเดอร์)"]
+    count: dict[str, int] = {}
+    for l in m["links"]:
+        if l["type"] == "contains" and byid.get(l["target"], {}).get("kind") == "file":
+            count[l["source"]] = count.get(l["source"], 0) + 1
+    for nid, k in sorted(count.items(), key=lambda x: -x[1])[:150]:
+        n = byid[nid]
+        out.append(f"- {n['machine']}: `{n.get('path', n['name'])}` — {k} ไฟล์")
+    return "\n".join(out) + "\n"
 
 
 def load_graphs() -> list[dict]:
@@ -274,7 +353,13 @@ def make_handler(cfg):
             if not self._authed():
                 return self._send(401, {"error": "ต้องใช้ token"})
             if u.path == "/api/graph":
-                return self._send(200, merge(load_graphs()))
+                g = merge(load_graphs())
+                g["peers"] = cfg.peer_status
+                return self._send(200, g)
+            if u.path == "/api/graphs":          # ข้อมูลดิบทุกเครื่อง สำหรับ sync สมองต่อสมอง
+                return self._send(200, load_graphs())
+            if u.path == "/api/knowledge.md":    # สรุปให้ AI อ่าน
+                return self._send(200, knowledge_md(load_graphs()), "text/markdown; charset=utf-8")
             return self._send(404, {"error": "not found"})
 
         def do_POST(self):
@@ -292,9 +377,13 @@ def make_handler(cfg):
             if u.path == "/api/push":
                 if not isinstance(body, dict) or "machine" not in body or "nodes" not in body:
                     return self._send(400, {"error": "รูปแบบกราฟไม่ถูกต้อง"})
-                save_graph(body)
-                print(f"  รับข้อมูลจาก {body['machine']} ({len(body['nodes'])} โหนด)")
-                return self._send(200, {"ok": True})
+                is_sync = "sync=1" in (u.query or "")
+                saved = save_graph(body, only_if_newer=is_sync)
+                if saved:
+                    print(f"  รับข้อมูลจาก {body['machine']} ({len(body['nodes'])} โหนด)")
+                return self._send(200, {"ok": True, "saved": saved})
+            if u.path == "/api/sync":
+                return self._send(200, {"peers": run_sync(cfg)})
             if u.path == "/api/rescan":
                 save_graph(scan(cfg.roots, cfg.machine, cfg.max_files))
                 return self._send(200, {"ok": True})
@@ -319,7 +408,21 @@ def lan_ip() -> str:
         return "127.0.0.1"
 
 
+def run_sync(cfg) -> dict:
+    for peer in cfg.peers:
+        try:
+            got, sent = sync_with(peer, cfg.peer_token or cfg.token)
+            cfg.peer_status[peer] = {"ok": True, "at": int(time.time()), "got": got, "sent": sent}
+            if got or sent:
+                print(f"  sync กับ {peer}: รับ {got} เครื่อง, ส่ง {sent} เครื่อง")
+        except Exception as e:  # noqa: BLE001
+            cfg.peer_status[peer] = {"ok": False, "at": int(time.time()), "error": str(e)[:200]}
+            print(f"  sync กับ {peer} ไม่สำเร็จ: {e}", file=sys.stderr)
+    return cfg.peer_status
+
+
 def cmd_serve(a):
+    a.peer_status = {}
     a.roots = [Path(r) for r in a.paths] or default_roots()
     if a.lan and not a.token:
         sys.exit("เปิด --lan ต้องตั้ง --token ด้วย เช่น --token " + os.urandom(6).hex())
@@ -339,6 +442,14 @@ def cmd_serve(a):
                 time.sleep(a.every)
                 save_graph(scan(a.roots, a.machine, a.max_files))
         threading.Thread(target=loop, daemon=True).start()
+    if a.peers:
+        print(f"   เชื่อมสมองกับ: {', '.join(a.peers)} (sync ทุก {a.sync_every} วินาที)")
+
+        def sync_loop():
+            while True:
+                run_sync(a)
+                time.sleep(a.sync_every)
+        threading.Thread(target=sync_loop, daemon=True).start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
@@ -372,6 +483,26 @@ def cmd_scan(a):
         print(f"บันทึกที่ {DATA_DIR}")
 
 
+def cmd_clone(a):
+    """คัดลอกสมองทั้งก้อนจากอีกเครื่องมาไว้เครื่องนี้"""
+    got, _ = sync_with(a.source, a.token, send=False)
+    print(f"คัดลอกสมองจาก {a.source} แล้ว: {got} เครื่อง → {DATA_DIR}")
+
+
+def cmd_export(a):
+    graphs = load_graphs()
+    if a.source:
+        graphs = _http(a.source.rstrip("/") + "/api/graphs", a.token)
+    if not graphs:
+        sys.exit("ยังไม่มีข้อมูล — รัน serve หรือ scan ก่อน")
+    out = Path(a.output)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "brain_knowledge.md").write_text(knowledge_md(graphs), "utf-8")
+    (out / "brain_knowledge.json").write_text(
+        json.dumps(merge(graphs), ensure_ascii=False), "utf-8")
+    print(f"ส่งออกแล้ว: {out / 'brain_knowledge.md'} และ brain_knowledge.json")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description="Brain - สมองกลเชื่อมทุกอย่างในคอม")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -388,6 +519,10 @@ def main(argv=None):
     s.add_argument("--lan", action="store_true", help="ให้เครื่องอื่นในวงแลนเชื่อมเข้ามาได้")
     s.add_argument("--token", default=os.environ.get("BRAIN_TOKEN", ""))
     s.add_argument("--no-scan", action="store_true")
+    s.add_argument("--peer", dest="peers", action="append", default=[],
+                   help="สมองอีกเครื่องที่จะ sync สองทาง เช่น http://192.168.1.20:8765 (ใส่ได้หลายครั้ง)")
+    s.add_argument("--peer-token", default="", help="token ของสมองอีกเครื่อง (ถ้าไม่เหมือนของเรา)")
+    s.add_argument("--sync-every", type=int, default=60)
     s.add_argument("-v", "--verbose", action="store_true")
     s.set_defaults(fn=cmd_serve)
 
@@ -396,6 +531,17 @@ def main(argv=None):
     s.add_argument("--hub", required=True, help="เช่น http://192.168.1.10:8765")
     s.add_argument("--token", default=os.environ.get("BRAIN_TOKEN", ""))
     s.set_defaults(fn=cmd_push)
+
+    s = sub.add_parser("clone", help="คัดลอกสมองทั้งก้อนจากอีกเครื่องมาเครื่องนี้")
+    s.add_argument("source", help="เช่น http://192.168.1.10:8765")
+    s.add_argument("--token", default=os.environ.get("BRAIN_TOKEN", ""))
+    s.set_defaults(fn=cmd_clone)
+
+    s = sub.add_parser("export", help="ส่งออกความรู้เป็น Markdown/JSON ให้ AI อ่าน")
+    s.add_argument("-o", "--output", default="brain_export")
+    s.add_argument("--from", dest="source", default="", help="ดึงจากสมองอีกเครื่องแทน")
+    s.add_argument("--token", default=os.environ.get("BRAIN_TOKEN", ""))
+    s.set_defaults(fn=cmd_export)
 
     s = sub.add_parser("scan", help="สแกนอย่างเดียว")
     common(s)
