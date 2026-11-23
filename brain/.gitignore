@@ -1,2 +1,3 @@
 data/
 viewer-src/node_modules/
+__pycache__/
