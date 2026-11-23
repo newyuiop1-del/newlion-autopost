@@ -21,6 +21,7 @@ import json
 import os
 import platform
 import re
+import secrets
 import socket
 import subprocess
 import sys
@@ -34,6 +35,7 @@ from urllib.parse import parse_qs, urlparse
 HERE = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("BRAIN_DATA", HERE / "data"))
 VERSION = 1
+DISCO_PORT = 8766          # พอร์ต UDP สำหรับหาคอมเครื่องอื่นใน Wi-Fi เดียวกันอัตโนมัติ
 
 # ---------------------------------------------------------------- categories
 # หมวดตรงกับ legend บนหน้าจอ
@@ -341,10 +343,19 @@ def make_handler(cfg):
                 return True
             if not cfg.token:
                 return False
+            ip = self.client_address[0]
+            fails = cfg.fails.get(ip, [0, 0.0])
+            if fails[0] >= 8 and time.time() - fails[1] < 120:   # เดารหัสผิดบ่อย → ล็อก 2 นาที
+                return False
             got = self.headers.get("X-Brain-Token", "")
             if not got:
                 got = parse_qs(urlparse(self.path).query).get("token", [""])[0]
-            return hmac.compare_digest(got, cfg.token)
+            ok = hmac.compare_digest(got, cfg.token)
+            if not ok and got:
+                cfg.fails[ip] = [fails[0] + 1, time.time()]
+            elif ok:
+                cfg.fails.pop(ip, None)
+            return ok
 
         def do_GET(self):
             u = urlparse(self.path)
@@ -360,8 +371,15 @@ def make_handler(cfg):
                 g = merge(load_graphs())
                 g["peers"] = cfg.peer_status
                 return self._send(200, g)
+            if u.path == "/api/nearby":
+                now = time.time()
+                known = {p.split("://", 1)[1] for p in cfg.peers}
+                return self._send(200, [
+                    {**v, "addr": k, "connected": k in known}
+                    for k, v in sorted(cfg.nearby.items()) if now - v["seen"] < 15])
             if u.path == "/api/info":
                 return self._send(200, {"machine": cfg.machine, "addr": cfg.addr, "lan": cfg.lan,
+                                        "os": f"{platform.system()} {platform.release()}",
                                         "token": cfg.token if self.client_address[0] in ("127.0.0.1", "::1", "::ffff:127.0.0.1") else ""})
             if u.path == "/api/graphs":          # ข้อมูลดิบทุกเครื่อง สำหรับ sync สมองต่อสมอง
                 return self._send(200, load_graphs())
@@ -428,6 +446,52 @@ def make_handler(cfg):
             return self._send(404, {"error": "not found"})
 
     return H
+
+
+def start_discovery(cfg) -> None:
+    """ประกาศตัวทาง UDP broadcast + ฟังว่ามี Brain เครื่องไหนอยู่ใน Wi-Fi เดียวกันบ้าง"""
+    cfg.nearby = {}
+    msg = json.dumps({"brain": 1, "machine": cfg.machine, "port": cfg.port}).encode()
+
+    def announce():
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        while True:
+            ip = lan_ip()
+            for dest in {"255.255.255.255", ip.rsplit(".", 1)[0] + ".255"}:
+                try:
+                    s.sendto(msg, (dest, DISCO_PORT))
+                except OSError:
+                    pass
+            time.sleep(4)
+
+    def listen():
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if hasattr(socket, "SO_REUSEPORT"):
+            try:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            except OSError:
+                pass
+        try:
+            s.bind(("", DISCO_PORT))
+        except OSError as e:
+            print(f"  (หาคอมอัตโนมัติไม่ได้: {e} — ยังใส่ IP เองได้)", file=sys.stderr)
+            return
+        while True:
+            try:
+                raw, (ip, _) = s.recvfrom(2048)
+                d = json.loads(raw)
+                port = int(d["port"])
+                name = str(d["machine"])[:64]
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+            if d.get("brain") != 1 or (name == cfg.machine and port == cfg.port):
+                continue
+            cfg.nearby[f"{ip}:{port}"] = {"machine": name, "ip": ip, "port": port, "seen": time.time()}
+
+    threading.Thread(target=announce, daemon=True).start()
+    threading.Thread(target=listen, daemon=True).start()
 
 
 def lan_ip() -> str:
@@ -504,25 +568,29 @@ def cmd_serve(a):
         DATA_DIR.mkdir(exist_ok=True)
         a.token = tf.read_text().strip() if tf.exists() else ""
         if not a.token:
-            a.token = os.urandom(4).hex()
+            a.token = f"{secrets.randbelow(900000) + 100000}"   # รหัสจับคู่ 6 หลัก
             tf.write_text(a.token)
     a.peers = load_peers()
     for u in a.peer_urls:
         a.peers[norm_peer(u)] = a.peer_token or a.token
     save_peers(a.peers)
     a.addr = f"{lan_ip()}:{a.port}"
+    a.fails = {}
+    a.nearby = {}
     if not a.no_scan:
         print(f"กำลังสแกน {a.machine}: {', '.join(map(str, a.roots))}")
         save_graph(scan(a.roots, a.machine, a.max_files))
     host = "0.0.0.0" if a.lan else "127.0.0.1"
-    srv = ThreadingHTTPServer((host, a.port), make_handler(a))
+    try:
+        srv = ThreadingHTTPServer((host, a.port), make_handler(a))
+    except OSError:
+        sys.exit(f"พอร์ต {a.port} ถูกใช้อยู่ — Brain อาจเปิดอยู่แล้ว ลองเปิด http://localhost:{a.port}")
+    if a.lan:
+        start_discovery(a)
     print(f"\n🧠 สมองพร้อมแล้ว → เปิด http://localhost:{a.port}")
     if a.lan:
-        print(f"   ที่อยู่เครื่องนี้: {a.addr}    รหัส: {a.token}")
-        print("   (เอา 2 อย่างนี้ไปกรอกที่หน้าจอ Brain ของคอมอีกเครื่อง แล้วกด 'เชื่อม')")
-    if a.lan:
-        print(f"   คอมเครื่องอื่นส่งข้อมูลเข้ามาด้วย:\n"
-              f"   python brain.py push --hub http://{lan_ip()}:{a.port} --token {a.token}")
+        print(f"   ชื่อเครื่อง: {a.machine}   ที่อยู่: {a.addr}   รหัสจับคู่: {a.token}")
+        print("   เชื่อมคอม: กดปุ่ม '＋ เชื่อมคอม' บนหน้าจอ แล้วเลือกเครื่องที่เจอ")
     if a.every:
         def loop():
             while True:
@@ -597,7 +665,7 @@ def main(argv=None):
 
     def common(sp):
         sp.add_argument("paths", nargs="*", help="โฟลเดอร์ที่จะสแกน (ค่าเริ่มต้น: Desktop/Documents/...)")
-        sp.add_argument("--machine", default=socket.gethostname(), help="ชื่อเครื่อง")
+        sp.add_argument("--machine", default=socket.gethostname().removesuffix(".local"), help="ชื่อเครื่อง")
         sp.add_argument("--max-files", type=int, default=4000)
         sp.add_argument("--every", type=int, default=0, help="สแกนซ้ำทุกกี่วินาที (0 = ครั้งเดียว)")
 

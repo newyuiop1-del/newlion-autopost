@@ -4,78 +4,209 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Brain Cinema</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
 <style>
-  :root { --panel: rgba(14,18,34,.78); --line: rgba(160,180,255,.18); --text: #e8ecff; --dim: #8f97b8; --accent: #ff9a3c; }
+  :root {
+    --bg: #03040a; --glass: rgba(13,16,30,.72); --glass-2: rgba(255,255,255,.06);
+    --line: rgba(170,185,255,.14); --text: #eef1ff; --dim: #8e96b8; --faint: #5b6283;
+    --accent: #ff9a3c; --accent-2: #ffc078; --ok: #5ee6a0; --err: #ff8080; --blue: #6aa6ff;
+    --r: 18px;
+  }
   * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; background: #03040a; color: var(--text); font: 14px/1.45 system-ui, "Noto Sans Thai", "Sukhumvit Set", sans-serif; overflow: hidden; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); overflow: hidden;
+    font: 14px/1.5 "IBM Plex Sans Thai", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  button, input { font: inherit; color: inherit; }
   #graph { position: fixed; inset: 0; }
-  .panel { position: fixed; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; backdrop-filter: blur(14px); padding: 16px; }
-  #side { left: 16px; bottom: 16px; width: 260px; max-height: calc(100% - 32px); overflow: auto; }
-  #side small { letter-spacing: .25em; color: var(--dim); font-size: 10px; }
-  #side h1 { margin: 2px 0 0; font-size: 26px; letter-spacing: .08em; }
-  #side .sub { color: var(--dim); margin: 0 0 12px; }
-  #legend label { display: flex; align-items: center; gap: 8px; padding: 3px 0; cursor: pointer; }
+  .glass { background: var(--glass); border: 1px solid var(--line); border-radius: var(--r);
+    backdrop-filter: blur(18px) saturate(140%); -webkit-backdrop-filter: blur(18px) saturate(140%);
+    box-shadow: 0 10px 40px rgba(0,0,0,.35); }
+
+  /* ---------- top bar ---------- */
+  #top { position: fixed; top: 16px; left: 16px; right: 16px; display: flex; align-items: center; gap: 12px; padding: 10px 12px 10px 18px; z-index: 5; }
+  .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .brand .orb { width: 30px; height: 30px; border-radius: 50%; flex: none;
+    background: radial-gradient(circle at 35% 35%, #fff, #ffd59a 30%, #ff8a2a 60%, transparent 72%); box-shadow: 0 0 24px #ff9a3c88; }
+  .brand b { font: 700 18px "Space Grotesk", sans-serif; letter-spacing: .12em; }
+  .brand small { display: block; color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .search { position: relative; flex: 1; max-width: 420px; margin-left: auto; }
+  .search input { width: 100%; padding: 10px 14px 10px 38px; border-radius: 999px; border: 1px solid var(--line); background: rgba(0,0,0,.3); outline: none; }
+  .search input:focus { border-color: #ffb36b88; }
+  .search svg { position: absolute; left: 13px; top: 50%; transform: translateY(-50%); opacity: .6; }
+  #hits { position: absolute; top: calc(100% + 8px); left: 0; right: 0; padding: 6px; display: none; }
+  #hits.on { display: block; }
+  #chips { display: flex; gap: 6px; overflow: hidden; }
+  .chip { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; background: var(--glass-2); border: 1px solid var(--line); white-space: nowrap; font-size: 13px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 8px var(--ok); flex: none; }
+  .dot.off { background: var(--err); box-shadow: 0 0 8px var(--err); }
+  .btn { border: 0; border-radius: 999px; padding: 10px 18px; cursor: pointer; font-weight: 600; white-space: nowrap;
+    background: linear-gradient(180deg, var(--accent-2), var(--accent)); color: #2a1503; box-shadow: 0 4px 20px #ff9a3c44; transition: transform .15s, filter .15s; }
+  .btn:hover { filter: brightness(1.08); } .btn:active { transform: scale(.97); }
+  .btn:disabled { opacity: .5; cursor: wait; }
+  .btn.ghost { background: var(--glass-2); color: var(--text); box-shadow: none; border: 1px solid var(--line); font-weight: 500; }
+  #connectOpen { position: relative; }
+  #connectOpen .badge { position: absolute; top: -6px; right: -6px; min-width: 20px; height: 20px; border-radius: 10px; padding: 0 6px;
+    background: var(--ok); color: #03140b; font-size: 12px; line-height: 20px; display: none; }
+  #connectOpen.pulse { animation: pulse 2s infinite; }
+  #connectOpen.pulse .badge { display: block; }
+  @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 #ff9a3c88; } 50% { box-shadow: 0 0 0 10px #ff9a3c00; } }
+
+  /* ---------- lists ---------- */
+  ul { list-style: none; margin: 0; padding: 0; }
+  .row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 12px; cursor: pointer; min-width: 0; }
+  .row:hover { background: var(--glass-2); }
+  .row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .meta { margin-left: auto; color: var(--dim); font-size: 12px; white-space: nowrap; }
+  .sw { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+
+  /* ---------- legend ---------- */
+  #legend { position: fixed; left: 16px; bottom: 16px; padding: 14px; width: 250px; z-index: 4; }
+  #legend h4, .label { margin: 0 0 6px; font-size: 11px; letter-spacing: .18em; color: var(--faint); font-weight: 600; text-transform: uppercase; }
+  #legend label { display: flex; align-items: center; gap: 10px; padding: 4px 6px; border-radius: 8px; cursor: pointer; user-select: none; }
+  #legend label:hover { background: var(--glass-2); }
   #legend input { display: none; }
-  #legend input:not(:checked) ~ * , #legend label:has(input:not(:checked)) { opacity: .35; }
-  #legend i, li i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
-  #legend span, li span { margin-left: auto; color: var(--dim); font-size: 12px; }
-  .btns { display: flex; gap: 8px; margin: 14px 0 8px; }
-  button { flex: 1; border: 0; border-radius: 999px; padding: 9px 12px; font: inherit; cursor: pointer; color: #1b1205; background: linear-gradient(#ffb36b, #ff8a2a); }
-  button.ghost { background: rgba(255,255,255,.12); color: var(--text); }
-  button.ghost.on { background: #dfe6ff; color: #0b1020; }
-  #q { width: 100%; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--line); background: rgba(0,0,0,.35); color: var(--text); font: inherit; }
-  ul { list-style: none; margin: 6px 0 0; padding: 0; }
-  li { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 8px; cursor: pointer; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-  li:hover { background: rgba(255,255,255,.08); }
-  #machines li, #peers li { cursor: default; flex-wrap: wrap; white-space: normal; }
-  #connect { margin: 12px 0 4px; padding: 10px; border: 1px solid var(--line); border-radius: 12px; display: grid; gap: 6px; }
-  #connect input { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: rgba(0,0,0,.35); color: var(--text); font: inherit; width: 100%; }
-  #connect .me { font-size: 12px; color: #ffd9a0; word-break: break-all; }
-  #connectMsg { font-size: 12px; }
-  #connectMsg.err { color: #ff8f8f; } #connectMsg.ok { color: #8fffb0; }
-  #peers li button { flex: none; padding: 2px 8px; font-size: 11px; background: rgba(255,255,255,.1); color: var(--dim); }
-  #status { color: var(--dim); font-size: 12px; margin-top: 8px; }
-  .hint { color: var(--dim); font-size: 11px; margin-top: 6px; }
-  #info { right: 16px; top: 16px; width: 320px; max-height: calc(100% - 32px); overflow: auto; }
-  #info h3 { margin: 0 0 4px; word-break: break-all; }
-  #info p { margin: 0 0 8px; color: var(--dim); }
-  #info code { display: block; font-size: 11px; color: #b9c6ff; word-break: break-all; margin-bottom: 10px; }
-  #info h4 { margin: 12px 0 0; font-size: 12px; color: var(--dim); font-weight: 500; }
-  .tip { background: rgba(10,12,24,.9); padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); font: 12px system-ui, sans-serif; }
-  #toast { position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 80px); background: var(--panel); border: 1px solid var(--line); padding: 10px 16px; border-radius: 999px; transition: transform .3s; }
+  #legend label.off { opacity: .35; }
+  #legend span { margin-left: auto; color: var(--dim); font-size: 12px; }
+  #stats { color: var(--dim); font-size: 12px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+
+  /* ---------- tools ---------- */
+  #tools { position: fixed; right: 16px; bottom: 16px; display: flex; gap: 8px; padding: 8px; z-index: 4; }
+  .tool { width: 44px; height: 44px; border-radius: 14px; border: 0; background: transparent; cursor: pointer; display: grid; place-items: center; position: relative; }
+  .tool:hover, .tool.on { background: var(--glass-2); }
+  .tool.on { color: var(--accent-2); }
+  .tool[data-tip]:hover::after { content: attr(data-tip); position: absolute; bottom: calc(100% + 10px); right: 0; white-space: nowrap;
+    background: #0d1020; border: 1px solid var(--line); padding: 4px 10px; border-radius: 8px; font-size: 12px; color: var(--text); }
+  .tool.spin svg { animation: rot 1s linear infinite; } @keyframes rot { to { transform: rotate(360deg); } }
+
+  /* ---------- info ---------- */
+  #info { position: fixed; right: 16px; top: 92px; width: 330px; max-height: calc(100% - 180px); overflow: auto; padding: 18px; z-index: 4; }
+  #info h3 { margin: 0 0 4px; font-size: 17px; word-break: break-all; }
+  #info p { margin: 0 0 10px; color: var(--dim); font-size: 13px; }
+  #info code { display: block; font-size: 11px; color: #b9c6ff; word-break: break-all; margin-bottom: 12px; padding: 8px 10px; background: rgba(0,0,0,.3); border-radius: 8px; }
+  #info .close { position: absolute; right: 10px; top: 10px; }
+
+  /* ---------- connect modal ---------- */
+  #modal { position: fixed; inset: 0; background: rgba(2,3,8,.55); backdrop-filter: blur(4px); display: none; place-items: center; z-index: 20; padding: 16px; }
+  #modal.on { display: grid; }
+  .sheet { width: min(560px, 100%); max-height: calc(100vh - 32px); overflow: auto; padding: 24px; position: relative; animation: rise .25s ease; }
+  @keyframes rise { from { transform: translateY(12px); opacity: 0; } }
+  .sheet h2 { margin: 0; font-size: 22px; }
+  .sheet .lead { color: var(--dim); margin: 2px 0 18px; }
+  .close { position: absolute; right: 14px; top: 14px; width: 34px; height: 34px; border-radius: 50%; border: 0; background: var(--glass-2); cursor: pointer; font-size: 16px; }
+  .card { background: rgba(255,255,255,.04); border: 1px solid var(--line); border-radius: 16px; padding: 16px; margin-bottom: 14px; }
+  .me { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .me .who b { font-size: 16px; } .me .who small { display: block; color: var(--dim); }
+  .code { margin-left: auto; text-align: right; }
+  .code .digits { font: 700 30px "Space Grotesk", monospace; letter-spacing: .14em; color: var(--accent-2); text-shadow: 0 0 18px #ff9a3c66; }
+  .code small { color: var(--dim); font-size: 12px; }
+  .finding { display: flex; align-items: center; gap: 8px; color: var(--dim); font-size: 13px; }
+  .radar { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--blue); border-top-color: transparent; animation: rot 1s linear infinite; }
+  .pc { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px; padding: 12px; border-radius: 14px; border: 1px solid var(--line); margin-top: 8px; background: rgba(0,0,0,.2); }
+  .pc .ico { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: linear-gradient(160deg, #2a3560, #151a33); font-size: 20px; }
+  .pc b { display: block; } .pc small { color: var(--dim); }
+  .pc .pair { grid-column: 1 / -1; display: none; gap: 8px; }
+  .pc.open .pair { display: flex; }
+  .pin { flex: 1; text-align: center; letter-spacing: .5em; font: 600 22px "Space Grotesk", monospace; padding: 10px; border-radius: 12px; border: 1px solid var(--line); background: rgba(0,0,0,.35); outline: none; }
+  .pin:focus { border-color: var(--accent); }
+  .msg { font-size: 13px; margin-top: 8px; min-height: 1em; } .msg.ok { color: var(--ok); } .msg.err { color: var(--err); }
+  .tag-ok { color: var(--ok); font-size: 13px; font-weight: 600; }
+  .empty { color: var(--dim); font-size: 13px; padding: 10px 4px 0; }
+  .empty ol { margin: 6px 0 0; padding-left: 18px; }
+  details summary { cursor: pointer; color: var(--dim); font-size: 13px; list-style: none; }
+  details summary::before { content: "▸ "; } details[open] summary::before { content: "▾ "; }
+  .manual { display: grid; grid-template-columns: 1fr 140px auto; gap: 8px; margin-top: 10px; }
+  .manual input { padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: rgba(0,0,0,.35); outline: none; min-width: 0; }
+  .peer { display: flex; align-items: center; gap: 10px; padding: 8px 4px; }
+  .peer small { color: var(--dim); display: block; }
+  .peer .x { margin-left: auto; border: 0; background: transparent; color: var(--faint); cursor: pointer; font-size: 12px; }
+  .peer .x:hover { color: var(--err); }
+
+  .float-tooltip-kap { background: none !important; padding: 0 !important; }
+  .tip { background: rgba(10,12,24,.92); padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); font: 12px "IBM Plex Sans Thai", sans-serif; }
+  #toast { position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 100px); padding: 10px 18px; border-radius: 999px; transition: transform .3s; z-index: 30; }
   #toast.on { transform: translate(-50%, 0); }
-  @media (max-width: 640px) { #side { width: auto; right: 16px; max-height: 45%; } #info { left: 16px; width: auto; max-height: 45%; } }
+
+  @media (max-width: 860px) {
+    #chips, .brand small { display: none; }
+    #top { flex-wrap: wrap; } .search { order: 3; max-width: none; flex-basis: 100%; }
+    #legend { width: auto; right: 84px; } #legend label { padding: 2px 4px; }
+    #tools { flex-direction: column; padding: 6px; }
+    #info { left: 16px; width: auto; top: auto; bottom: 16px; max-height: 50%; z-index: 6; }
+    .manual { grid-template-columns: 1fr; }
+  }
 </style>
 </head>
 <body>
 <div id="graph"></div>
-<aside id="side" class="panel">
-  <small>EVERYTHING TOGETHER</small>
-  <h1>BRAIN</h1>
-  <p class="sub">สมองกลเชื่อมทุกเครื่อง</p>
-  <div id="legend"></div>
-  <input id="q" placeholder="🔍 ค้นหาไฟล์ / โฟลเดอร์…" autocomplete="off">
-  <ul id="hits"></ul>
-  <div class="btns">
-    <button id="rescan">⟳ สแกน</button>
-    <button id="spin" class="ghost">↻ หมุน</button>
+
+<header id="top" class="glass">
+  <div class="brand"><div class="orb"></div><div><b>BRAIN</b><small id="sub">กำลังโหลด…</small></div></div>
+  <div class="search">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <input id="q" placeholder="ค้นหาไฟล์ในทุกเครื่อง…" autocomplete="off">
+    <ul id="hits" class="glass"></ul>
   </div>
-  <div id="connect">
-    <div class="me" id="me">ที่อยู่เครื่องนี้: …</div>
-    <input id="peerIp" placeholder="IP คอมอีกเครื่อง เช่น 192.168.1.20" autocomplete="off">
-    <input id="peerToken" placeholder="รหัสของเครื่องนั้น" autocomplete="off">
-    <button id="connectBtn">🔗 เชื่อม</button>
-    <div id="connectMsg"></div>
-  </div>
-  <ul id="peers"></ul>
-  <button id="reload" class="ghost" style="width:100%">⟳ sync ตอนนี้</button>
-  <ul id="machines"></ul>
-  <a id="export" target="_blank" class="hint" style="display:block;color:#b9c6ff">📄 สรุปความรู้ให้ AI อ่าน (knowledge.md)</a>
-  <div id="status"></div>
-  <div class="hint">คลิก = ดูความเชื่อมโยง · Ctrl+คลิก = เปิดไฟล์ · ลาก = หมุน · สกรอล = ซูม</div>
+  <div id="chips"></div>
+  <button id="connectOpen" class="btn">＋ เชื่อมคอม<span class="badge" id="badge"></span></button>
+</header>
+
+<aside id="legend" class="glass">
+  <h4>หมวดไฟล์ · กดเพื่อซ่อน</h4>
+  <div id="cats"></div>
+  <div id="stats"></div>
 </aside>
-<aside id="info" class="panel" hidden></aside>
-<div id="toast"></div>
+
+<nav id="tools" class="glass">
+  <button class="tool on" id="spin" data-tip="หมุนอัตโนมัติ"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg></button>
+  <button class="tool" id="fit" data-tip="มองภาพรวม"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+  <button class="tool" id="rescan" data-tip="สแกนเครื่องนี้ใหม่"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5"/></svg></button>
+  <a class="tool" id="export" target="_blank" data-tip="สรุปให้ AI อ่าน" style="color:inherit"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg></a>
+</nav>
+
+<aside id="info" class="glass" hidden></aside>
+
+<div id="modal">
+  <div class="sheet glass" role="dialog" aria-label="เชื่อมคอม">
+    <button class="close" id="connectClose" aria-label="ปิด">✕</button>
+    <h2>เชื่อมคอม</h2>
+    <p class="lead">ให้คอมทุกเครื่องมีสมองเดียวกัน — ไฟล์ของทุกเครื่องจะรวมกันและ sync อัตโนมัติ</p>
+
+    <div class="card me">
+      <div class="who"><div class="label">คอมเครื่องนี้</div><b id="meName">…</b><small id="meAddr"></small></div>
+      <div class="code"><div class="label">รหัสจับคู่</div><div class="digits" id="meCode">— — —</div><small>อีกเครื่องต้องใส่รหัสนี้</small></div>
+    </div>
+
+    <div class="card">
+      <div class="label">คอมที่เจอใน Wi-Fi เดียวกัน</div>
+      <div class="finding"><div class="radar"></div>กำลังค้นหาอยู่ตลอด…</div>
+      <div id="nearby"></div>
+      <div class="empty" id="nearbyEmpty">
+        ยังไม่เจอเครื่องอื่น ลองแบบนี้:
+        <ol>
+          <li>เปิด Brain ที่คอมอีกเครื่อง (ดับเบิลคลิก <b>เปิดสมอง</b>)</li>
+          <li>ให้ทั้งสองเครื่องต่อ Wi-Fi เดียวกัน (ไม่ใช่ Wi-Fi แขก)</li>
+          <li>Windows ถาม Firewall ให้กด <b>Allow / อนุญาต</b></li>
+        </ol>
+      </div>
+      <details style="margin-top:12px">
+        <summary>ไม่เจอ? ใส่ IP เอง</summary>
+        <div class="manual">
+          <input id="mIp" placeholder="IP เช่น 192.168.1.20" inputmode="decimal">
+          <input id="mCode" placeholder="รหัส 6 หลัก" inputmode="numeric">
+          <button class="btn" id="mGo">เชื่อม</button>
+        </div>
+        <div class="msg" id="mMsg"></div>
+      </details>
+    </div>
+
+    <div class="card" id="peersCard" hidden>
+      <div class="label">เชื่อมอยู่</div>
+      <div id="peers"></div>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="glass"></div>
 <script src="viewer.bundle.js"></script>
 </body>
 </html>
