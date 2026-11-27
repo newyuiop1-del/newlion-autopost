@@ -52,6 +52,7 @@ button.del{color:#ff8a8a}
 .sw{width:12px;height:12px;border-radius:3px;display:inline-block;border:1px solid rgba(255,255,255,.25)}
 .slider{display:grid;grid-template-columns:88px minmax(0,1fr) 44px;gap:10px;align-items:center;font-size:13px;color:var(--muted)}
 .slider output{font:500 12px var(--mono);color:var(--fg);text-align:right;font-variant-numeric:tabular-nums}
+select{font:500 13.5px var(--ui);height:36px;padding:0 10px;border-radius:8px;border:1px solid var(--line);background:var(--raise);color:var(--fg);max-width:100%}
 input[type=range]{width:100%;accent-color:var(--gold)}
 .els{display:flex;flex-direction:column;gap:10px}
 .el{border:1px solid var(--line);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:8px;background:var(--ink)}
@@ -91,7 +92,11 @@ textarea{width:100%;min-height:72px;resize:vertical;font:15px/1.5 var(--ui);colo
           <button id="addSlide">+ สไลด์ใหม่</button>
           <button id="dupSlide">ทำสำเนา</button>
           <button class="del ghost" id="delSlide">ลบสไลด์นี้</button>
-          <button class="ghost" id="resetAll">คืนค่าตัวอย่าง</button>
+        </div>
+        <div class="row">
+          <label class="sub" for="preset">ชุดเนื้อหา</label>
+          <select id="preset"><option value="problems">ปัญหาที่นักเทรดต้องเจอ (8 สไลด์)</option><option value="course">เรื่องคอร์ส (4 สไลด์)</option></select>
+          <button class="ghost" id="resetAll">โหลดชุดนี้</button>
         </div>
       </section>
 
@@ -101,6 +106,10 @@ textarea{width:100%;min-height:72px;resize:vertical;font:15px/1.5 var(--ui);colo
           <label class="filebtn">เลือกรูปพื้นหลัง<input type="file" id="bgFile" accept="image/*"></label>
           <button class="ghost" id="bgClear">ใช้พื้นหลังตัวอย่าง</button>
         </div>
+        <div class="row">
+          <label class="filebtn">ใส่รูปกราฟหลายรูปพร้อมกัน<input type="file" id="bgMulti" accept="image/*" multiple></label>
+        </div>
+        <div class="sub">เลือกรูปกราฟจากเครื่องได้ทีละหลายรูป ระบบจะเรียงตามชื่อไฟล์ แล้วใส่เป็นพื้นหลังตั้งแต่สไลด์ที่เปิดอยู่เป็นต้นไป</div>
         <div class="slider"><label for="blur">เบลอ</label><input type="range" id="blur" min="0" max="60" step="1"><output id="blurV"></output></div>
         <div class="slider"><label for="bright">ความสว่าง</label><input type="range" id="bright" min="25" max="110" step="1"><output id="brightV"></output></div>
         <div class="slider"><label for="zoom">ซูม</label><input type="range" id="zoom" min="100" max="200" step="1"><output id="zoomV"></output></div>
@@ -130,7 +139,7 @@ textarea{width:100%;min-height:72px;resize:vertical;font:15px/1.5 var(--ui);colo
 const W = 1080, H = 1920;
 const cv = document.getElementById('cv');
 const ctx = cv.getContext('2d');
-const STORE = 'newlion-story-v1';
+const STORE = 'newlion-story-v2';
 const TYPES = {
   box:   {name:'กล่องดำ',   size:46, w:.86},
   label: {name:'ป้าย IG',   size:40, w:.6},
@@ -141,7 +150,34 @@ const TYPES = {
 const uid = () => Math.random().toString(36).slice(2, 9);
 const el = (type, text, x, y, extra={}) => ({id:uid(), type, text, x, y, size:TYPES[type].size, w:TYPES[type].w, ...extra});
 
-function sample() {
+function problemsSet() {
+  const prob = (n, title, body, fix, scene) => ({blur:10, bright:48, zoom:100, scene, els:[
+    el('label', `ปัญหาที่ ${n} · ${title}`, .5, .385, {size:34, w:.9}),
+    el('box', body, .5, .47, {size:46}),
+    el('box', 'ทางแก้: ' + fix, .5, .585, {size:36, w:.92}),
+  ]});
+  return [
+    {blur:10, bright:45, zoom:100, scene:4, els:[
+      el('box','ปัญหาที่นักเทรด\nเกือบทุกคนต้องเจอ',.5,.44,{size:62,w:.8}),
+      el('box','ผมเองก็เคยเจอครบทุกข้อ\nลองดูว่าตอนนี้คุณติดอยู่ข้อไหน 👇',.5,.545,{size:40,w:.9}),
+    ]},
+    prob(1,'FOMO','เห็นกราฟวิ่งแรงแล้วรีบกดตาม ทั้งที่ยังไม่มีสัญญาณตามระบบ สุดท้ายเข้าไปซื้อที่ยอดพอดี','พลาดจุดเข้าก็ปล่อยไป ตลาดเปิดทุกวัน โอกาสใหม่มาเสมอ',5),
+    prob(2,'เลื่อน SL หนี','"เดี๋ยวก็กลับมา" คือประโยคที่ทำให้พอร์ตแตกบ่อยที่สุด ขาดทุนเล็กๆ กลายเป็นก้อนใหญ่','ตั้ง SL ก่อนกดเข้าทุกครั้ง และห้ามขยับออก',6),
+    prob(3,'เทรดเอาคืน','เสียไม้เดียวแล้วอยากได้คืนทันที ไม้ต่อไปเลยใหญ่ขึ้น เร็วขึ้น และมั่วขึ้น','กำหนดไว้เลยว่าเสียกี่ไม้ติดแล้วปิดจอ วันนี้พอแค่นี้',7),
+    prob(4,'Lot ตามอารมณ์','มั่นใจก็ออก Lot ใหญ่ ไม่มั่นใจก็ออกเล็ก ผลคือไม้ที่เสียมักเป็นไม้ที่ใหญ่ที่สุด','เสี่ยงเท่ากันทุกไม้ เช่น 0.5–1% ของพอร์ต',8),
+    prob(5,'เปลี่ยนระบบบ่อย','เสีย 3 ไม้ติดก็ทิ้งระบบไปหาอันใหม่ ทั้งที่ยังเก็บสถิติไม่ถึง 100 ไม้','เก็บสถิติให้ครบก่อน แล้วค่อยตัดสินว่าระบบใช้ได้ไหม',9),
+    prob(6,'ไม่จดบันทึก','ไม่รู้ว่าเสียเพราะระบบหรือเพราะตัวเอง เลยแก้ไม่ถูกจุดสักที','จดทุกไม้ จุดเข้า เหตุผล ผลลัพธ์ และอารมณ์ตอนนั้น',10),
+    {blur:8, bright:60, zoom:100, scene:11, els:[
+      el('note','วินัย\nสำคัญกว่า\nกลยุทธ์',.64,.2,{rot:-3,size:80,w:.56}),
+      el('box','ข้อไหนตรงกับคุณที่สุด\nตอบกลับสตอรี่นี้มาบอกกันได้เลยครับ',.5,.47,{size:42,w:.9}),
+      el('label','IG : newlion',.5,.555),
+      el('alert','ระวังบัญชีปลอม แอดมินไม่ทักไปหาใครก่อนนะครับ',.5,.63),
+    ]},
+  ];
+}
+const PRESETS = {problems: problemsSet, course: courseSet};
+function sample(k) { return (PRESETS[k] || problemsSet)(); }
+function courseSet() {
   return [
     {blur:22, bright:62, zoom:100, scene:0, els:[
       el('box','หลายคนทักมาถามว่าจะเปิดคอร์สเมื่อไหร่ คำตอบคือยังไม่ใช่ปีนี้ครับ เพราะอยากเห็นสถิติของตัวเองนิ่งพอก่อน',.5,.44),
@@ -183,7 +219,38 @@ function save() {
 /* ---------- background ---------- */
 const filterOK = (() => { try { const c = document.createElement('canvas').getContext('2d'); c.filter = 'blur(2px)'; return c.filter === 'blur(2px)'; } catch(e) { return false; } })();
 
+function paintChart(c, n) {
+  // placeholder candlestick chart until the real chart screenshots are added
+  let seed = n * 9301 + 49297;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  c.fillStyle = '#131722'; c.fillRect(0,0,W,H);
+  c.strokeStyle = '#1f2535'; c.lineWidth = 2;
+  for (let x = 0; x < W; x += 135) { c.beginPath(); c.moveTo(x,0); c.lineTo(x,H); c.stroke(); }
+  for (let y = 0; y < H; y += 135) { c.beginPath(); c.moveTo(0,y); c.lineTo(W,y); c.stroke(); }
+  const N = 42, cs = [];
+  let p = 100, drift = (rnd() - .5) * .9;
+  for (let i = 0; i < N; i++) {
+    if (i % 12 === 0) drift = (rnd() - .5) * 1.4;
+    const o = p, cl = o + drift + (rnd() - .5) * 3.2;
+    cs.push({o, c:cl, h:Math.max(o,cl) + rnd()*1.6, l:Math.min(o,cl) - rnd()*1.6}); p = cl;
+  }
+  const hi = Math.max(...cs.map(k => k.h)), lo = Math.min(...cs.map(k => k.l));
+  const Y = v => 260 + (hi - v) / (hi - lo) * 1380, cw = W / N;
+  c.setLineDash([14,10]); c.strokeStyle = '#4b5878'; c.lineWidth = 3;
+  [hi - (hi-lo)*.18, lo + (hi-lo)*.22].forEach(v => { c.beginPath(); c.moveTo(0,Y(v)); c.lineTo(W,Y(v)); c.stroke(); });
+  c.setLineDash([]);
+  cs.forEach((k, i) => {
+    const x = i*cw + cw/2, up = k.c >= k.o;
+    c.strokeStyle = c.fillStyle = up ? '#26a69a' : '#ef5350'; c.lineWidth = 3;
+    c.beginPath(); c.moveTo(x, Y(k.h)); c.lineTo(x, Y(k.l)); c.stroke();
+    c.fillRect(x - cw*.33, Y(Math.max(k.o,k.c)), cw*.66, Math.max(3, Math.abs(Y(k.o) - Y(k.c))));
+  });
+  c.strokeStyle = 'rgba(242,193,78,.85)'; c.lineWidth = 4; c.beginPath();
+  cs.forEach((k, i) => { const a = cs.slice(Math.max(0,i-8), i+1); const m = a.reduce((s,q) => s+q.c, 0)/a.length; const x = i*cw + cw/2; i ? c.lineTo(x, Y(m)) : c.moveTo(x, Y(m)); });
+  c.stroke();
+}
 function paintScene(c, n) {
+  if (n >= 4) return paintChart(c, n);
   // procedural "desk at night" placeholder so the template looks right before a photo is chosen
   const g = c.createLinearGradient(0,0,0,H);
   const tops = [['#1b2230','#3a2a1c'],['#22262c','#4a3220'],['#2a2c2e','#1c1d20'],['#2b3036','#5b3a22']][n%4];
@@ -433,7 +500,7 @@ document.querySelectorAll('[data-add]').forEach(b => b.onclick = () => {
   slides[cur].els.push(e); sel = e.id; save(); buildEls(); render();
   const ta = document.getElementById('ta-' + e.id); if (ta) { ta.focus(); ta.select(); }
 });
-$('addSlide').onclick = () => { slides.push({sid:uid(), blur:24, bright:60, zoom:100, scene:slides.length%4, els:[el('box','พิมพ์ข้อความที่นี่',.5,.5)]}); cur = slides.length-1; sel = null; save(); syncAll(); };
+$('addSlide').onclick = () => { slides.push({sid:uid(), blur:10, bright:50, zoom:100, scene:4 + slides.length, els:[el('box','พิมพ์ข้อความที่นี่',.5,.5)]}); cur = slides.length-1; sel = null; save(); syncAll(); };
 $('dupSlide').onclick = () => {
   const s = slides[cur]; const {_cache, ...rest} = s;
   const c = JSON.parse(JSON.stringify(rest)); c.sid = uid(); c.els.forEach(e => { const old = e.id; e.id = uid(); if (hlImgs[old]) hlImgs[e.id] = hlImgs[old]; });
@@ -448,8 +515,20 @@ $('delSlide').onclick = () => {
 };
 let resetArm = 0;
 $('resetAll').onclick = () => {
-  if (Date.now() - resetArm > 3000) { resetArm = Date.now(); $('resetAll').textContent = 'กดอีกครั้งเพื่อยืนยัน'; setTimeout(() => $('resetAll').textContent = 'คืนค่าตัวอย่าง', 3000); return; }
-  slides = sample(); slides.forEach(s => s.sid = uid()); cur = 0; sel = null; resetArm = 0; $('resetAll').textContent = 'คืนค่าตัวอย่าง'; save(); syncAll();
+  if (Date.now() - resetArm > 3000) { resetArm = Date.now(); $('resetAll').textContent = 'กดอีกครั้ง (แทนที่ข้อความเดิม)'; setTimeout(() => $('resetAll').textContent = 'โหลดชุดนี้', 3000); return; }
+  slides = sample($('preset').value); slides.forEach(s => s.sid = uid()); cur = 0; sel = null; resetArm = 0; $('resetAll').textContent = 'โหลดชุดนี้'; save(); syncAll();
+};
+$('bgMulti').onchange = e => {
+  const files = [...e.target.files].sort((a, b) => a.name.localeCompare(b.name, undefined, {numeric:true}));
+  e.target.value = '';
+  if (!files.length) return;
+  const start = cur;
+  while (slides.length < start + files.length) slides.push({sid:uid(), blur:10, bright:50, zoom:100, scene:4 + slides.length, els:[]});
+  let done = 0;
+  files.forEach((f, i) => readImg(f, im => {
+    const s = slides[start + i]; imgs[s.sid] = im; s._cache = null;
+    if (++done === files.length) { save(); syncAll(); toast(`ใส่รูปกราฟ ${files.length} รูป ในสไลด์ ${start+1}–${start+files.length} แล้ว`); }
+  }));
 };
 
 /* ---------- export ---------- */
