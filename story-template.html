@@ -259,6 +259,8 @@ function load() {
   return sample();
 }
 slides = load();
+// replace the retired placeholder social-proof slide with the risk-math slide
+slides = slides.map(s => (s.els || []).some(e => e.type === 'hl' && /รีวิวสมาชิก/.test(e.text)) || (s.els || []).some(e => /ใส่คำรีวิวจริงจากสมาชิก/.test(e.text)) ? hookSet()[3] : s);
 slides.forEach(s => { s.sid = s.sid || uid(); });
 let saveT;
 function save() {
